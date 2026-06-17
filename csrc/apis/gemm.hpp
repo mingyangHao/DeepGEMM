@@ -7,8 +7,9 @@
 #include "../jit_kernels/impls/sm90_fp8_gemm_1d2d.hpp"
 #include "../jit_kernels/impls/sm90_bf16_gemm.hpp"
 #include "../jit_kernels/impls/sm100_fp8_fp4_gemm_1d1d.hpp"
+#include "../jit_kernels/impls/sm100_fp8_fp4_gemm_1d1d_splitk.hpp"
 #include "../jit_kernels/impls/sm100_bf16_gemm.hpp"
-#endif 
+#endif
 
 #include "../jit_kernels/impls/smxx_cublaslt.hpp"
 
@@ -596,9 +597,53 @@ static void cublaslt_gemm_tt(const torch::Tensor& a, const torch::Tensor& b,
     cublaslt_gemm_nt(a.transpose(0, 1), b, d, c);
 }
 
+#if DG_FP8_COMPATIBLE and DG_TENSORMAP_COMPATIBLE
+// Single-kernel split-K FP8 block-scaled NT GEMM that EMITS per-K-split partials (no internal reduce).
+//   a    : [M, K] fp8_e4m3 (K-major)
+//   sfa  : PRE-TRANSFORMED int32-packed UE8M0 activation scale (compute layout), 1x128 (gran_k=128)
+//   b    : [N, K] fp8_e4m3 (K-major)
+//   sfb  : PRE-TRANSFORMED int32-packed UE8M0 weight scale (compute layout), 128x128 (gran_k=128)
+//   d    : [num_splits, M, N] FP32 partials (output); partial p is written to slice p
+// Scales are the FULL (un-sliced) compute-layout tensors; the kernel takes each split's K-slice via
+// the SF TMA k-offset. The caller must sum the num_splits FP32 partials downstream (in FP32).
+// HARD constraint: K % (BLOCK_K * 4 * num_splits) == 0  (BLOCK_K=128 -> K % (512*num_splits) == 0).
+static void fp8_gemm_nt_splitk(const std::pair<torch::Tensor, torch::Tensor>& a,
+                               const std::pair<torch::Tensor, torch::Tensor>& b,
+                               const torch::Tensor& d,
+                               const int& num_splits,
+                               const std::string& compiled_dims) {
+    const auto major_a = get_major_type_ab(a.first);
+    const auto major_b = get_major_type_ab(b.first);
+    DG_HOST_ASSERT(major_a == cute::UMMA::Major::K and major_b == cute::UMMA::Major::K);
+
+    const auto [m, k ] = get_shape<2>(a.first);
+    const auto [n, k_] = get_shape<2>(b.first);
+    DG_HOST_ASSERT(k == k_);
+    DG_HOST_ASSERT(a.first.scalar_type() == torch::kFloat8_e4m3fn and b.first.scalar_type() == torch::kFloat8_e4m3fn);
+
+    // Pre-transformed, int32-packed UE8M0 scales only (skip transform_sf_into_required_layout).
+    DG_HOST_ASSERT(a.second.scalar_type() == torch::kInt and b.second.scalar_type() == torch::kInt);
+
+    const auto arch_major = device_runtime->get_arch_major();
+    DG_HOST_ASSERT(arch_major == 10);
+    if (m == 0 or n == 0)
+        return;
+
+    sm100_fp8_fp4_gemm_1d1d_splitk(a.first, a.second, b.first, b.second, d,
+                                   m, n, k, num_splits, /*gran_k_a=*/128, /*gran_k_b=*/128,
+                                   major_a, major_b, compiled_dims);
+}
+#endif
+
 static void register_apis(pybind11::module_& m) {
 
 #if DG_FP8_COMPATIBLE and DG_TENSORMAP_COMPATIBLE
+    // Single-kernel split-K FP8 GEMM emitting [num_splits, M, N] FP32 partials (o_b decode path)
+    m.def("fp8_gemm_nt_splitk", &fp8_gemm_nt_splitk,
+          py::arg("a"), py::arg("b"), py::arg("d"),
+          py::arg("num_splits"),
+          py::arg("compiled_dims") = "nk");
+
     // FP8 FP4 GEMMs
     m.def("fp8_fp4_gemm_nt", &fp8_fp4_gemm_nt,
           py::arg("a"), py::arg("b"), py::arg("d"),

@@ -44,6 +44,7 @@ try:
         fp8_gemm_nt, fp8_gemm_nn,
         fp8_gemm_tn, fp8_gemm_tt,
         fp8_gemm_nt_skip_head_mid,
+        fp8_gemm_nt_splitk,
         m_grouped_fp8_gemm_nt_contiguous,
         m_grouped_fp8_gemm_nn_contiguous,
         m_grouped_fp8_gemm_nt_masked,

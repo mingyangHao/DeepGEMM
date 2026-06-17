@@ -224,6 +224,13 @@ static void register_apis(pybind11::module_& m) {
           py::arg("expr"), py::arg("a"), py::arg("b"),
           py::arg("d"),  py::arg("c") = std::nullopt,
           py::arg("recipe") = std::make_tuple(1, 128, 128));
+    // Batched FP8 GEMM `[B,M,K] @ [B,N,K].T -> [B,M,N]` — used as the o_b_proj
+    // split-K path (batch dim = K-splits) feeding the mHC x-ring fusion.
+    m.def("fp8_bmm", &fp8_bmm,
+          py::arg("a"), py::arg("sfa"), py::arg("b"), py::arg("sfb"),
+          py::arg("d"), py::arg("c") = std::nullopt,
+          py::arg("recipe") = std::make_tuple(1, 128, 128),
+          py::arg("compiled_dims") = "nk");
 #endif
 }
 
