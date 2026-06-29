@@ -603,10 +603,10 @@ static void cublaslt_gemm_tt(const torch::Tensor& a, const torch::Tensor& b,
 //   sfa  : PRE-TRANSFORMED int32-packed UE8M0 activation scale (compute layout), 1x128 (gran_k=128)
 //   b    : [N, K] fp8_e4m3 (K-major)
 //   sfb  : PRE-TRANSFORMED int32-packed UE8M0 weight scale (compute layout), 128x128 (gran_k=128)
-//   d    : [num_splits, M, N] FP32 partials (output); partial p is written to slice p
+//   d    : [num_splits, M, N] FP32 or BF16 partials; partial p is written to slice p
 // Scales are the FULL (un-sliced) compute-layout tensors; the kernel takes each split's K-slice via
-// the SF TMA k-offset. The caller must sum the num_splits FP32 partials downstream (in FP32).
-// HARD constraint: K % (BLOCK_K * 4 * num_splits) == 0  (BLOCK_K=128 -> K % (512*num_splits) == 0).
+// the SF TMA k-offset. BF16 output is intended for a downstream fused consumer; reduction should
+// still accumulate the num_splits partials in FP32.
 static void fp8_gemm_nt_splitk(const std::pair<torch::Tensor, torch::Tensor>& a,
                                const std::pair<torch::Tensor, torch::Tensor>& b,
                                const torch::Tensor& d,
@@ -638,7 +638,7 @@ static void fp8_gemm_nt_splitk(const std::pair<torch::Tensor, torch::Tensor>& a,
 static void register_apis(pybind11::module_& m) {
 
 #if DG_FP8_COMPATIBLE and DG_TENSORMAP_COMPATIBLE
-    // Single-kernel split-K FP8 GEMM emitting [num_splits, M, N] FP32 partials (o_b decode path)
+    // Single-kernel split-K FP8 GEMM emitting [num_splits, M, N] FP32/BF16 partials
     m.def("fp8_gemm_nt_splitk", &fp8_gemm_nt_splitk,
           py::arg("a"), py::arg("b"), py::arg("d"),
           py::arg("num_splits"),

@@ -33,6 +33,7 @@ public:
         CUtensorMap tensor_map_sfa;
         CUtensorMap tensor_map_sfb;
         CUtensorMap tensor_map_cd;
+        void* gmem_split_partials = nullptr;
     };
 
     static std::string generate_impl(const Args& args) {
@@ -85,7 +86,8 @@ static void __instantiate_kernel() {{
             args.grouped_layout, args.gemm_desc.m, args.gemm_desc.n, args.gemm_desc.k,
             args.tensor_map_a, args.tensor_map_b,
             args.tensor_map_sfa, args.tensor_map_sfb,
-            args.tensor_map_cd));
+            args.tensor_map_cd,
+            args.gmem_split_partials));
     }
 };
 
